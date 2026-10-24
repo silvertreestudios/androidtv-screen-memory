@@ -18,23 +18,26 @@ Successful submission does not establish hardware completion. Step sizes, coordi
 
 ## Build and local checks
 
-Use Windows PowerShell or PowerShell 7 on Windows, JDK 21 on PATH (`java`, `javac`, `jar`, `keytool`), Python 3, and the official Android SDK with platform `android-31` and build tools `35.0.0`. No Gradle or additional libraries are required. From a fresh checkout with no `build` directory:
+Use PowerShell 7 on Linux or Windows (Windows PowerShell 5 is also supported), JDK 21 on PATH (`java`, `javac`, `jar`, `keytool`), Python 3, and the official Android SDK with platform `android-31` and build tools `35.0.0`. No Gradle or additional libraries are required. From a fresh checkout with no `build` directory:
 
 ```powershell
-$SdkRoot = 'C:\Android\Sdk'
-$KeyPath = Join-Path $env:LOCALAPPDATA 'ScreenMemory\debug.keystore'
+$SdkRoot = $env:ANDROID_HOME # Set to your official Android SDK directory.
+$UserHome = if ($env:HOME) { $env:HOME } else { $env:USERPROFILE }
+$KeyPath = Join-Path $UserHome '.screen-memory/debug.keystore'
 New-Item -ItemType Directory -Force (Split-Path $KeyPath) | Out-Null
 # A child PowerShell preserves the build's exit status while capturing both streams.
-& powershell.exe -NoProfile -File .\build.ps1 -SdkRoot $SdkRoot -KeyPath $KeyPath 2>&1 | Tee-Object -FilePath build.log
+& pwsh -NoProfile -File ./build.ps1 -SdkRoot $SdkRoot -KeyPath $KeyPath 2>&1 | Tee-Object -FilePath build.log
 if ($LASTEXITCODE -ne 0) { throw 'Build failed; inspect build.log' }
-python .\verify_offline.py .\build\screen-memory-debug.apk --dexdump .\build\dexdump.txt --build-log .\build.log
+python ./verify_offline.py ./build/screen-memory-debug.apk --dexdump ./build/dexdump.txt --build-log ./build.log
 if ($LASTEXITCODE -ne 0) { throw 'Verification failed' }
 ```
+
+For Windows PowerShell 5, use `powershell.exe` in place of `pwsh`. CI uses Ubuntu 24.04 with PowerShell 7; Windows is not a regular CI job. Linux and Windows build execution remain separate verification gates.
 
 The build refuses an existing `build` directory to preserve evidence. It compiles with warnings treated as failures, runs three host Java test suites, packages and signs `build/screen-memory-debug.apk`, and checks signature/alignment. To run only the source/XML subset:
 
 ```powershell
-python .\verify_offline.py
+python ./verify_offline.py
 ```
 
 The verifier checks an automated subset. Independent binary manifest, message payload, and control-flow review remain necessary; CI does not verify hardware behavior or broad compatibility.

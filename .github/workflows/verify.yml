@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   verify:
-    runs-on: windows-2022
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     defaults:
       run:
@@ -33,7 +33,7 @@ jobs:
       - name: Prepare official Android SDK tools
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
-          $sdkmanager = Join-Path $env:ANDROID_HOME 'cmdline-tools/latest/bin/sdkmanager.bat'
+          $sdkmanager = Join-Path $env:ANDROID_HOME 'cmdline-tools/latest/bin/sdkmanager'
           if (!(Test-Path $sdkmanager)) { throw 'Runner SDK manager unavailable' }
           & $sdkmanager --sdk_root=$env:ANDROID_HOME 'platforms;android-31' 'build-tools;35.0.0'
           if ($LASTEXITCODE -ne 0) { throw "SDK preparation failed: $LASTEXITCODE" }
