@@ -11,7 +11,7 @@ import zipfile
 import xml.etree.ElementTree as ET
 
 
-def verify(root, apk=None, dexdump=None, build_log=None):
+def verify(root, apk=None, dexdump=None, build_log=None, version_code=3, version_name="1.2"):
     checks = []
 
     def check(value, label):
@@ -114,6 +114,7 @@ def verify(root, apk=None, dexdump=None, build_log=None):
         dump = read_evidence(dexdump)
         check(len(re.findall(r"invoke-virtual[^\n]*Landroid/os/Messenger;\.send:", dump)) == 1, "single DEX send site; dataflow needs review")
         log = read_evidence(build_log)
+        check(binary_version_matches(log, version_code, version_name), "exact binary version evidence")
         check("org.offline.screenmemory" in log and "android.permission.FOREGROUND_SERVICE" in log, "binary manifest evidence present; manual decode required")
         check("Verified using v3 scheme (APK Signature Scheme v3): true" in log, "official signature evidence")
         check(re.search(r"(?m)^Verification (?:successful|succesful)\s*$", log) is not None, "zipalign evidence")
@@ -128,6 +129,14 @@ def verify(root, apk=None, dexdump=None, build_log=None):
     return result
 
 
+def binary_version_matches(log, version_code, version_name):
+    packages = [line for line in log.splitlines() if line.startswith("package: ")]
+    return (len(packages) == 1 and
+            re.search(r"(?:^| )name='org\.offline\.screenmemory'(?: |$)", packages[0]) is not None and
+            re.search(r"(?:^| )versionCode='" + re.escape(str(version_code)) + r"'(?: |$)", packages[0]) is not None and
+            re.search(r"(?:^| )versionName='" + re.escape(version_name) + r"'(?: |$)", packages[0]) is not None)
+
+
 def read_evidence(path):
     data = path.read_bytes()
     return data.decode("utf-16" if data.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig")
@@ -138,10 +147,16 @@ def main():
     parser.add_argument("apk", nargs="?", type=Path)
     parser.add_argument("--dexdump", type=Path)
     parser.add_argument("--build-log", type=Path)
+    parser.add_argument("--version-code", type=int, default=3)
+    parser.add_argument("--version-name", default="1.2")
     args = parser.parse_args()
+    if not 3 <= args.version_code <= 2100000000:
+        parser.error("versionCode outside Android bounds")
+    if args.version_name != "1.2" and not re.fullmatch(r"1\.2\+sha\.[0-9a-f]{40}", args.version_name):
+        parser.error("invalid versionName")
     if args.apk is None and (args.dexdump or args.build_log):
         parser.error("supply APK with both binary evidence files")
-    print(json.dumps(verify(Path(__file__).resolve().parent, args.apk, args.dexdump, args.build_log), indent=2))
+    print(json.dumps(verify(Path(__file__).resolve().parent, args.apk, args.dexdump, args.build_log, args.version_code, args.version_name), indent=2))
 
 
 if __name__ == "__main__":

@@ -4,6 +4,12 @@ Screen Memory 1.2 saves named digital zoom and position presets relative to a ma
 
 This app targets only the vendor service `com.vt.tv.laserprojectorservice.LaserProjectorService`. It requires Android API 31 or later and that service to be available. It is not a general Android TV controller, and compatibility with other hardware or firmware is unverified.
 
+## Compatible projectors
+
+- **Valerion VisionMaster Max** — tested; compatibility with other models is not established.
+
+Compatibility depends on firmware and the vendor service. Other Valerion models and firmware versions are unverified.
+
 ## Using the remote
 
 - Use the D-pad to move focus and Select/Enter to activate a tile. Selecting a memory submits its estimated offsets. Hold Select on a memory to edit it; Native opens a read-only view.
@@ -42,7 +48,15 @@ python ./verify_offline.py
 
 The verifier checks an automated subset. Independent binary manifest, message payload, and control-flow review remain necessary; CI does not verify hardware behavior or broad compatibility.
 
-Preserve your signing key locally and keep it out of Git. A self-built key cannot update an installed app signed with a different key. CI generates an ephemeral random debug key, so its builds are not update-compatible with differently signed installations or previous CI runs. No release signing or distribution is configured.
+Preserve your signing key locally and keep it out of Git. A self-built key cannot update an installed app signed with a different key. CI generates an ephemeral random debug key, so its builds are not update-compatible with differently signed installations or previous CI runs. Feature and PR builds run both Debug and ReleaseTest through the same build and verification sequence. ReleaseTest uses a throwaway key to exercise release signing and SHA metadata without production secrets; neither build is published. Temporary CI keys are removed in a finally block.
+
+## SHA releases
+
+After review, merge, and signing-secret provisioning, successful `main` pushes automatically publish `sha-<full 40-character commit SHA>` with `screen-memory-<fullsha>.apk` and its `.apk.sha256` checksum. The tag targets the triggering commit. Android versionName is `1.2+sha.<fullsha>`; versionCode is this workflow's GitHub run number plus 3, bounded to 2,100,000,000. Local defaults remain 3 / 1.2. Preserve the workflow's run-number history to retain increasing update versions. Reruns retain the run number and refuse differing existing assets rather than overwrite them; byte differences may require manual review.
+
+The owner/Silver Admin must separately provision a **new dedicated persistent signing key** and repository Actions secrets `RELEASE_KEYSTORE_BASE64`, `RELEASE_KEYSTORE_PASSWORD`, `RELEASE_KEY_ALIAS`, and `RELEASE_KEY_PASSWORD` through the approved secure process. Do not put secret values in chat, source, or logs. Missing secrets fail the main build with no debug fallback. No releases are available until these prerequisites are complete.
+
+Release signing establishes a new identity. These APKs **cannot update an existing installation signed with a different key**, including the installed debug identity. Plan runtime/data migration separately with the owner before changing installations; this automation performs no uninstall or migration. Release signing does not harden this currently debuggable build.
 
 ## Privacy and limitations
 
