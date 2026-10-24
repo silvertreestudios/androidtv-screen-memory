@@ -1,0 +1,67 @@
+# Local agent work and configuration
+.agent-temp/
+.agents/
+.codex/
+.aws/
+
+# Generated output and binary/archive artifacts
+/build/
+/out/
+/output/
+/dist/
+*.apk
+*.aab
+*.dex
+*.class
+*.jar
+*.aar
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.tgz
+*.gz
+*.exe
+*.dll
+*.so
+__pycache__/
+*.py[cod]
+
+# Signing material and local configuration
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.pem
+*.key
+.env
+.env.*
+local.properties
+/sdk/
+/android-sdk/
+.gradle/
+local.config.*
+
+# Diagnostics, device data and captures
+*.log
+/TestResults/
+/test-results/
+/coverage/
+/device-data/
+/screenshots/
+/captures/
+/diagnostics/
+*.hprof
+*.trace
+*.dmp
+
+# Editor and OS files
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini

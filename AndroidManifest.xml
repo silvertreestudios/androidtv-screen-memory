@@ -1,0 +1,11 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="org.offline.screenmemory" android:versionCode="3" android:versionName="1.2">
+<uses-sdk android:minSdkVersion="31" android:targetSdkVersion="31"/>
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+<uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
+<uses-feature android:name="android.hardware.faketouch" android:required="false"/>
+<queries><package android:name="com.vt.tv.laserprojectorservice"/></queries>
+<application android:name="org.offline.screenmemory.MemoryApp" android:label="Screen Memory" android:icon="@drawable/ic_screen_memory" android:banner="@drawable/tv_banner" android:theme="@style/Overview" android:allowBackup="false" android:debuggable="true" android:usesCleartextTraffic="false">
+<activity android:name="org.offline.screenmemory.MainActivity" android:screenOrientation="landscape" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/><category android:name="android.intent.category.LEANBACK_LAUNCHER"/></intent-filter></activity>
+<service android:name="org.offline.screenmemory.ControlService" android:exported="false"/>
+</application>
+</manifest>

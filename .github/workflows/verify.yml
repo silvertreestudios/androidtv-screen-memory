@@ -1,0 +1,56 @@
+name: Build and verify
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: windows-2022
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare official Android SDK tools
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $sdkmanager = Join-Path $env:ANDROID_HOME 'cmdline-tools/latest/bin/sdkmanager.bat'
+          if (!(Test-Path $sdkmanager)) { throw 'Runner SDK manager unavailable' }
+          & $sdkmanager --sdk_root=$env:ANDROID_HOME 'platforms;android-31' 'build-tools;35.0.0'
+          if ($LASTEXITCODE -ne 0) { throw "SDK preparation failed: $LASTEXITCODE" }
+      - name: Build debug APK and verify actual evidence
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $keyPath = Join-Path $env:RUNNER_TEMP 'screen-memory-debug.keystore'
+          try {
+            # Fresh random key per run; never cached or uploaded. Not update-compatible.
+            if (Test-Path $keyPath) { throw 'Unexpected existing debug key' }
+            # Invoke a child shell so native failures in build.ps1 reach this step.
+            & pwsh -NoProfile -File ./build.ps1 -SdkRoot $env:ANDROID_HOME -KeyPath $keyPath 2>&1 | Tee-Object -FilePath build.log
+            $buildExit = $LASTEXITCODE
+            if ($buildExit -ne 0) { exit $buildExit }
+            & python ./verify_offline.py ./build/screen-memory-debug.apk --dexdump ./build/dexdump.txt --build-log ./build.log
+            $verifyExit = $LASTEXITCODE
+            if ($verifyExit -ne 0) { exit $verifyExit }
+          } finally {
+            if (Test-Path $keyPath) { Remove-Item -LiteralPath $keyPath -Force }
+          }
