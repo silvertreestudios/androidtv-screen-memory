@@ -9,12 +9,16 @@ permissions:
   contents: read
 
 concurrency:
-  group: verify-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: verify-${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/main' && github.sha || 'branch' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   verify:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: ${{ fromJSON(github.event_name == 'push' && github.ref == 'refs/heads/main' && '["Release"]' || '["Debug","ReleaseTest"]') }}
     timeout-minutes: 20
     defaults:
       run:
@@ -37,20 +41,84 @@ jobs:
           if (!(Test-Path $sdkmanager)) { throw 'Runner SDK manager unavailable' }
           & $sdkmanager --sdk_root=$env:ANDROID_HOME 'platforms;android-31' 'build-tools;35.0.0'
           if ($LASTEXITCODE -ne 0) { throw "SDK preparation failed: $LASTEXITCODE" }
-      - name: Build debug APK and verify actual evidence
+      - name: Local source and release configuration checks
+        run: |
+          python -m unittest discover -s tests -p 'test_*.py'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node ./tests/publish-release.test.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python ./verify_offline.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build and verify APK through shared sequence
+        env:
+          BUILD_MODE: ${{ matrix.mode }}
+          RELEASE_KEYSTORE_BASE64: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.RELEASE_KEYSTORE_BASE64 || '' }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.RELEASE_KEYSTORE_PASSWORD || (github.event_name != 'push' || github.ref != 'refs/heads/main') && 'temporary-test-password' || '' }}
+          RELEASE_KEY_ALIAS: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.RELEASE_KEY_ALIAS || (github.event_name != 'push' || github.ref != 'refs/heads/main') && 'temporary-test-key' || '' }}
+          RELEASE_KEY_PASSWORD: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.RELEASE_KEY_PASSWORD || (github.event_name != 'push' || github.ref != 'refs/heads/main') && 'temporary-test-password' || '' }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
-          $keyPath = Join-Path $env:RUNNER_TEMP 'screen-memory-debug.keystore'
+          $keyPath = Join-Path $env:RUNNER_TEMP ('screen-memory-'+$env:BUILD_MODE+'.keystore')
           try {
-            # Fresh random key per run; never cached or uploaded. Not update-compatible.
-            if (Test-Path $keyPath) { throw 'Unexpected existing debug key' }
-            # Invoke a child shell so native failures in build.ps1 reach this step.
-            & pwsh -NoProfile -File ./build.ps1 -SdkRoot $env:ANDROID_HOME -KeyPath $keyPath 2>&1 | Tee-Object -FilePath build.log
-            $buildExit = $LASTEXITCODE
-            if ($buildExit -ne 0) { exit $buildExit }
-            & python ./verify_offline.py ./build/screen-memory-debug.apk --dexdump ./build/dexdump.txt --build-log ./build.log
-            $verifyExit = $LASTEXITCODE
-            if ($verifyExit -ne 0) { exit $verifyExit }
+            if (Test-Path $keyPath) { throw 'Unexpected existing signing key' }
+            $signingMode = if ($env:BUILD_MODE -eq 'Debug') { 'Debug' } else { 'Release' }
+            if ($env:BUILD_MODE -eq 'Release') {
+              foreach ($name in @('RELEASE_KEYSTORE_BASE64','RELEASE_KEYSTORE_PASSWORD','RELEASE_KEY_ALIAS','RELEASE_KEY_PASSWORD')) {
+                if (![Environment]::GetEnvironmentVariable($name)) { throw ('Missing release secret: '+$name) }
+              }
+              New-Item -ItemType File -Path $keyPath | Out-Null
+              & chmod 600 $keyPath
+              if ($LASTEXITCODE -ne 0) { throw 'Key permissions failed' }
+              [IO.File]::WriteAllBytes($keyPath, [Convert]::FromBase64String($env:RELEASE_KEYSTORE_BASE64))
+            } elseif ($env:BUILD_MODE -eq 'ReleaseTest') {
+              # Throwaway key exercises the real Release signing path without repository secrets.
+              & keytool -genkeypair -keystore $keyPath -storepass:env RELEASE_KEYSTORE_PASSWORD -keypass:env RELEASE_KEY_PASSWORD -alias $env:RELEASE_KEY_ALIAS -dname 'CN=Temporary CI Test' -keyalg RSA -keysize 2048 -validity 1
+              if ($LASTEXITCODE -ne 0) { throw 'Temporary release test key generation failed' }
+              & chmod 600 $keyPath
+              if ($LASTEXITCODE -ne 0) { throw 'Key permissions failed' }
+            }
+            $identity = python -c "import release_config,json,os; print(json.dumps(release_config.identity(os.environ['GITHUB_SHA'],os.environ['GITHUB_RUN_NUMBER'])))" | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) { throw 'Invalid release identity' }
+            & pwsh -NoProfile -File ./build.ps1 -SdkRoot $env:ANDROID_HOME -KeyPath $keyPath -SigningMode $signingMode -VersionCode $identity[0] -VersionName $identity[1] 2>&1 | Tee-Object -FilePath build.log
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            $apk = './build/screen-memory-'+$signingMode.ToLowerInvariant()+'.apk'
+            python ./verify_offline.py $apk --dexdump ./build/dexdump.txt --build-log ./build.log --version-code $identity[0] --version-name $identity[1]
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            if ($env:BUILD_MODE -eq 'Release') {
+              New-Item -ItemType Directory release | Out-Null
+              $name = 'screen-memory-'+$env:GITHUB_SHA+'.apk'
+              Copy-Item $apk (Join-Path release $name)
+              $hash = (Get-FileHash (Join-Path release $name) -Algorithm SHA256).Hash.ToLowerInvariant()
+              [IO.File]::WriteAllText((Join-Path release ($name+'.sha256')), $hash+'  '+$name+"`n", [Text.UTF8Encoding]::new($false))
+            }
           } finally {
             if (Test-Path $keyPath) { Remove-Item -LiteralPath $keyPath -Force }
           }
+      - uses: actions/upload-artifact@v7.0.2
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          name: release-${{ github.sha }}
+          path: release/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: release-${{ github.sha }}
+          path: release
+      - uses: actions/github-script@v9.0.0
+        with:
+          script: |
+            await require('./scripts/publish-release.js')({github, context, core});
